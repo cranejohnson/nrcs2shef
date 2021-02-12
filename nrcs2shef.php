@@ -65,9 +65,9 @@
 		if(!$mail->send()) {
 			echo 'Message could not be sent.';
 			echo 'Mailer Error: ' . $mail->ErrorInfo;
-			$logger->log("Failed to send Rating Email: ".$mail->ErrorInfo,PEAR_LOG_INFO);
 		} else {
-			 $logger->log("Rating update email sent.",PEAR_LOG_INFO);
+			echo "Results sent by email\n";
+
 
 		}
 
@@ -82,11 +82,11 @@
 	
 	function createCSV($fp,$data){
 		$csv = "";
-		$headers = ['name','active','latitude','longitude','shefId','nwsShefId','network','stationTriplet','beginDate','endDate','obsDate','swe','AVERAGE','MEDIAN'];
+		$headers = ['name','active','latitude','longitude','shefId','nwsShefId','network','stationTriplet','beginDate','endDate','obsDate','swe','percentNormal','AVERAGE','MEDIAN'];
 		fputcsv($fp, $headers); 
 		foreach($data as $d){
 			foreach($headers as $h){
-				fwrite($fp, '"'.$d->$h.'",');			
+				if(property_exists($d,$h)) fwrite($fp, '"'.$d->$h.'",');			
 			}
 			fwrite($fp,"\n");
 		}				
@@ -180,6 +180,9 @@
 		$type = $normalValues[$station->stationTriplet]['type'];
 		if($type) $station->$type = $normalValues[$station->stationTriplet]['val'];
 		$stationData[$station->stationTriplet] = $station;
+		#if($station->swe > -9.99){
+                #    $station->percentNormal = round(($station->swe/$normalValues[$station->stationTriplet]['val'])*100);
+		#}    
 		$trip = explode(":",$station->stationTriplet);
 		$station->network = $trip[2];
 		if(strtotime($station->endDate) > time()) {
@@ -246,13 +249,13 @@
 	
 	
 	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", $chpsShef);
-	print_r($summaryStats);
-    //Put everything into a csv file for viewing in excel
+	
+	//Put everything into a csv file for viewing in excel
 	createCSV($fp,$stnMetaResp->return);
 	
 	fclose($fp);
 	$files[] = "nrcs2shef_chps_".$mon.$yr.".txt";
-	//sendEmail($summaryStats,$files);
+	sendEmail($summaryStats,$files);
 	
 	
 	exit();
