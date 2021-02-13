@@ -10,7 +10,10 @@
 	// and creates SHEF for CHPS
 
 	include 'stnListSnowCrs.php';  //contains $stationList array with names as keys and NWSID as value
-	require_once "/var/www/html/tools/PHPMailer/PHPMailerAutoload.php";
+	$mailer = "/var/www/html/tools/PHPMailer/PHPMailerAutoload.php";
+	if (file_exists($mailer)) {
+		require $mailer;
+	}	
 
 
 	date_default_timezone_set('UTC');
@@ -29,7 +32,7 @@
 	$files = array();
 
 
-
+	$summaryStats['numInStationList'] = count($stationList);
 
 
 
@@ -86,7 +89,11 @@
 		fputcsv($fp, $headers); 
 		foreach($data as $d){
 			foreach($headers as $h){
-				if(property_exists($d,$h)) fwrite($fp, '"'.$d->$h.'",');			
+				if(property_exists($d,$h)) {
+				   fwrite($fp, '"'.$d->$h.'",');			
+				}else{
+				   fwrite($fp,",");
+				}   
 			}
 			fwrite($fp,"\n");
 		}				
@@ -180,18 +187,20 @@
 		$type = $normalValues[$station->stationTriplet]['type'];
 		if($type) $station->$type = $normalValues[$station->stationTriplet]['val'];
 		$stationData[$station->stationTriplet] = $station;
-		#if($station->swe > -9.99){
-                #    $station->percentNormal = round(($station->swe/$normalValues[$station->stationTriplet]['val'])*100);
-		#}    
+		if($station->swe > -9.99 && $normalValues[$station->stationTriplet]['val'] ){
+                    $station->percentNormal = round(($station->swe/$normalValues[$station->stationTriplet]['val'])*100);
+		}    
 		$trip = explode(":",$station->stationTriplet);
 		$station->network = $trip[2];
 		if(strtotime($station->endDate) > time()) {
 			$station->active = 'true';
-			$summaryStats['Status']['Active sites']++;
+			$summaryStats['NRCS Status']['Active sites']++;
 		}else{
 			$station->active = 'false';
-			$summaryStats['Status']['Sites not active']++;
+			$summaryStats['NRCS Status']['Sites not active']++;
 			}		
+		
+		$summaryStats['sitesEncoded'] = "";
 		
 		if($trip[1] == "AK" & $station->active == 'true') $summaryStats['Number of Sites']['region']['AK']['Active']++;
 		if($trip[1] == "BC" & $station->active == 'true') $summaryStats['Number of Sites']['region']['BC']['Active']++;
@@ -218,6 +227,7 @@
 				$shefStations[$station->shefId]['idFrom'] = 'NRCS';
 			}	
 		}
+		$summaryStats['sitesNotEncoded'] = array();
 		if(strlen($station->nwsShefId)>0 ){
 			if($station->nwsShefId <> $station->shefId){
 				if($station->active == 'true'){
@@ -241,21 +251,51 @@
 			}
 		}
 	
-		if($sweData > -9999){	
-			$chpsShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV ".$sweData."   :".$station['idFrom']." shefId\n";
+		if($sweData > -9.99 && $station['idFrom'] == 'NWS'){	
+			$chpsShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV ".$sweData."\n";
+			$summaryStats['sitesEncoded'] .= $nwsid.",";
+			if (($key = array_search($nwsid, $stationList)) !== false) {
+    			unset($stationList[$key]);
+			}
+			
+		}elseif($sweData > -9.99){
+			$chpsMaybeShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV ".$sweData."\n";	
 		}
 	}	
+		
+	$summaryStats['sitesNotEncoded'] = $stationList;	
+	foreach($stationList as $name => $lid){
+		$chpsSWEShefMissing[] = ".A ".$lid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV -9.99\n";
+	}
 	
+	
+	$summaryStats['numShefEncoded'] = count($chpsShef);
+	$summaryStats['numShefMissing'] = count($chpsSWEShefMissing);
+	
+	
+
 	
 	
 	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", $chpsShef);
+	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", ":StnList sites below were missing \n",FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", $chpsSWEShefMissing,FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", ":Sites below were not in stnList\n",FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", $chpsMaybeShef,FILE_APPEND);
+	
+	
 	
 	//Put everything into a csv file for viewing in excel
 	createCSV($fp,$stnMetaResp->return);
 	
 	fclose($fp);
 	$files[] = "nrcs2shef_chps_".$mon.$yr.".txt";
-	sendEmail($summaryStats,$files);
+
+	if (file_exists($mailer)) {
+		sendEmail($summaryStats,$files);
+	}else{
+		print_r($summaryStats);
+	}	
+
 	
 	
 	exit();
@@ -274,145 +314,6 @@
 	
 
 
-	foreach ($stnResp->return as $station) {
-		$stnTrip = explode(":", $station);   //Explodes in [NRCSID,State,Type]
-		foreach ($stnMetaResp->return as $metaObj) {
-			if ($metaObj->stationTriplet == $station){
-				if (strstr($metaObj->name, "Disc") || !isset($stationList[$metaObj->name])) {  //Disc or Discontinued or station is not on our list
-					continue 2;  //break out of this foreach and continue in the outer foreach
-				}else{
-					$nwsid = $stationList[$metaObj->name];
-					$name = $metaObj->name;
-					$elev = $metaObj->elevation;
-					$lat = $metaObj->latitude;
-					$lon = $metaObj->longitude;
-					if ($stnTrip[1] == 'AK'){
-						$huc = $metaObj->huc;
-					}
-					// Build SWE queries
-					$sweParams = array('stationTriplets' => $station, 'elementCd' => 'WTEQ', 'ordinal' => '1',
-					'duration' => 'SEMIMONTHLY', 'beginDate' => $qYear.'-'.$qMonth.'-01', 'endDate' => $qYear.'-'.$qMonth.'-'.$lastDayOfMonth, 'getFlags' => '0');
-					$sweNormParams = array('stationTriplets' => $station, 'elementCd' => 'WTEQ', 'duration' => 'SEMIMONTHLY',
-					 'beginMonth' => $qMonth, 'beginDay' => '01', 'endMonth' => $qMonth, 'endDay' => $lastDayOfMonth, 'getFlags' => '0',
-					 "centralTendencyType" => "NORMAL");
-				}		
-			}
-		}
-		
-
-		//default to missing
-		$sweData = -9.99;
-		$sweNormData = -9.99;
-		$sdData = -9.99;
-		if (isset($sweResp->return->values)){
-			//dates and obs are in separate array objects
-			$latestIndex = count($sweResp->return->values) - 2;
-			//date only used for getting corresponding normal value
-			$sweDate = $sweResp->return->collectionDates[$latestIndex];
-			$sweData = $sweResp->return->values[$latestIndex];
-			
-			$chpsShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV ".$sweData."\n";
-			
-			//print $station . "\n".$name."\nSWE ".$snData . "\n";
-			$sweNormResp = $soapclient->getCentralTendencyData($sweNormParams);
-			//print "SwenormResp\n";
-			//print_r($sweNormResp);
-			if (is_soap_fault($sweNormResp)){
-				print "Got an error connecting to server.  Retrying...";
-				sleep(1);
-				$sweNormResp = $soapclient->getCentralTendencyData($sweNormParams);
-				if (is_soap_fault($sweNormResp)){
-					print "Two errors in a row for SwenormResp.  Exiting.";
-					exit;
-				}
-			}
-			if (isset($sweNormResp->return->values)){
-				$sweNormData = $sweNormResp->return->values[0];
-				//print "Norm SWE ".$normData . "\n";
-			}
-		}elseif($stnTrip[1] == 'AK'){
-			//print "No Snow Course SWE so look for a colocated SnowTel site only in AK\n";
-			$sntlParams = array('hucs' => $huc, 'networkCds' => 'SNTL', 'logicalAnd' => '1');
-			$sntlResp = $soapclient->getStations($sntlParams);
-			//print "sntlResp\n";
-			//print_r($sntlResp);
-			if (is_soap_fault($sntlResp)){
-				print "Got an error connecting to server.  Retrying...";
-				sleep(1);
-				$sntlResp = $soapclient->getStations($sntlParams);
-				if (is_soap_fault($sntlResp)){
-					print "Two errors in a row for sntlResp.  Exiting.";
-					exit;
-				}
-			}
-			if (isset($sntlResp->return)){
-				//print "Got a colocated SnowTel\n";
-				$sntlTrip = $sntlResp->return;
-				$sntlSweParams = array('stationTriplets' => $sntlTrip, 'elementCd' => 'WTEQ', 'ordinal' => '1',
-						'duration' => 'DAILY', 'beginDate' => $qYear.'-'.$qMonth.'-01', 'endDate' => $qYear.'-'.$qMonth.'-01', 'getFlags' => '0');
-				$sntlSweResp = $soapclient->getData($sntlSweParams);
-				//print "sntlSweResp\n";
-				//print_r($sntlSweResp);
-				if (is_soap_fault($sntlSweResp)){
-					print "Got an error connecting to server.  Retrying...";
-					sleep(1);
-					$sntlSweResp = $soapclient->getData($sntlSweParams);
-					if (is_soap_fault($sntlSweResp)){
-						print "Two errors in a row for sntlSweResp.  Exiting.";
-						exit;
-					}
-				}
-				
-				if (!isset($sntlSweResp->return->values)){
-					//print "...but it has no SWE data.\n";
-					$sntlSdParams = array('stationTriplets' => $sntlTrip, 'elementCd' => 'SNWD', 'ordinal' => '1',
-						'duration' => 'DAILY', 'beginDate' => $qYear.'-'.$qMonth.'-01', 'endDate' => $qYear.'-'.$qMonth.'-01', 'getFlags' => '0');
-					$sntlSdResp = $soapclient->getData($sntlSdParams);
-					//print "sntlSdResp\n";
-					//print_r($sntlSdResp);
-					if (is_soap_fault($sntlSdResp)){
-						print "Got an error connecting to server.  Retrying...";
-						sleep(1);
-						$sntlSdResp = $soapclient->getData($sntlSdParams);
-						if (is_soap_fault($sntlSdResp)){
-							print "Two errors in a row for sntlSdResp.  Exiting.";
-							exit;
-						}
-					}
-					if (!isset($sntlSdResp->return->values)){
-						//print "...and NO SD data.\n";
-						continue;
-					}else{
-						//print "...but we do have SD data:\n";
-						//print_r($sndResp);
-						if ($sntlSdResp->return->values == 0){
-							//print "\tand it is zero so we set SWE to zero.\n\n\n";
-							$sdDate = $qYear.'-'.$qMonth.'-01';
-							$sdData = 0.0;
-							$chpsShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SDIRV ".$sdData."\n";
-						}else{
-							$chpsShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SDIRV ".$sdData."\n";
-							continue;
-						}
-						//print "\n\n\n";
-					}
-				}else{
-					//print "...and here is the data:\n";
-					//print_r($sntResp);
-					$sweDate = $qYear.'-'.$qMonth.'-01';
-					$sweData = $sntlSweResp->return->values;
-					$chpsShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV ".$sweData."\n";
-					//print "$snDate - $snData\n";
-					//print "\n\n\n";
-				}
-				
-			}else{
-				//print "No SnowTel around here...\n\n\n";
-				continue;
-			}
-		}else{
-			continue;
-		}
 		
 		//build a point object for geoJSON file
 		$pnt = new stdClass();
@@ -449,7 +350,7 @@
 		if (!isset($lidList[$nwsid])){
 			$lidList[] = $nwsid;
 		}
-	}
+	
 	
 	//SD code for shef is SDIRM
 	$missingLids = array_diff($stationList,$lidList);
