@@ -19,102 +19,35 @@
 	date_default_timezone_set('UTC');
 	$unixDateNow = date_format(new DateTime(), 'U') * 1000;
 	$chpsShef = array();
-	$lidList = array();
-	$year = date("Y");
-	$yr = date("y");
+	$qYear = date("Y");  // 2021,2020
 	$monthDay = date("md");
-	$mon = date("m");
+	$qMonth = date("m");   // 01,02
 	$yearMon = date("Ym");
-	$lastDayOfMonth = date("t");
-	$reportFile = "";
-	$pickFirst = ['SNTL','SNOW','MSNT','COOP'];
+	$lastDayOfMonth = date("t");  
+	
+	//Order to select swe measurments from co-located sites
+	$pickFirst = ['SNOW','SNTL','MSNT','COOP'];
 	$summaryStats = array();
 	$files = array();
+	$emailList = array();
+
+	$summaryStats['Sites in Station List'] = count($stationList);
 
 
-	$summaryStats['numInStationList'] = count($stationList);
-
-
-
-	function sendEmail($summary,$files,$overRideEmail = false){
-		global $startTime;
-		$recipients = array(
-		   //'jessica.cherry@noaa.gov' => 'Jessie'
-		   );
- 
-		//If an overRideEmail is provided use that
-		if($overRideEmail){
-			$recipients = $overRideEmail;
-		}
-
-
-		$message = json_encode($summary, JSON_PRETTY_PRINT);
-
-
-		$mail = new PHPMailer;
 	
-		$mail->FromName = 'nws.ar.aprfc';
-		$mail->addAddress('benjamin.johnson@noaa.gov','Crane');
-
-		foreach($recipients as $email => $name)
-		{
-			$mail->AddAddress($email, $name);
-		}
-		$mail->Subject = "nrcs2shef";
-		$mail->Body = $message;
-		foreach($files as $file){
-			$mail->addAttachment($file);
-		}
-		if(!$mail->send()) {
-			echo 'Message could not be sent.';
-			echo 'Mailer Error: ' . $mail->ErrorInfo;
-		} else {
-			echo "Results sent by email\n";
-
-
-		}
-
-	}
-
-
-
-
-	function cmp($a, $b) {
-		return strcmp($a->name, $b->name);
-	}
-	
-	function createCSV($fp,$data){
-		$csv = "";
-		$headers = ['name','active','latitude','longitude','shefId','nwsShefId','network','stationTriplet','beginDate','endDate','obsDate','swe','percentNormal','AVERAGE','MEDIAN'];
-		fputcsv($fp, $headers); 
-		foreach($data as $d){
-			foreach($headers as $h){
-				if(property_exists($d,$h)) {
-				   fwrite($fp, '"'.$d->$h.'",');			
-				}else{
-				   fwrite($fp,",");
-				}   
+	if($argv){
+		foreach ($argv as $arg){
+			if(strpos($arg, '@')) $emailList[] = $arg;
+			if (preg_match("/\d{6}/",$arg)){
+				$qYear = substr($arg,0,4);
+				$qMonth = substr($arg,4,2);
 			}
-			fwrite($fp,"\n");
-		}				
-	}
+		}
+	}	
 	
 
-	if (isset($argv[1])){
-		$dateToQuery = $argv[1];
-		if (!preg_match("/\d{6}/",$dateToQuery)){
-			print "If an argument is provided it should be a date YYYYMM\n";
-			exit;
-		}
-		$qYear = substr($dateToQuery,0,4);
-		$qMonth = substr($dateToQuery,4,2);
-	}else{
-		$qYear = $year;
-		$qMonth = $mon;
-	}
-
-	$fp = fopen('nrcsRaw'.$qYear.$qMonth.'.csv', 'w'); 
-	$files[]= 'nrcsRaw'.$qYear.$qMonth.'.csv';
+	$fp = fopen('nrcsRaw_'.$qYear.$qMonth.'.csv', 'w'); 
+	$files[]= 'nrcsRaw_'.$qYear.$qMonth.'.csv';
 		
 	$summaryStats['Data For'] = date('M Y', strtotime($qMonth."/01/".$qYear));
 	$summaryStats['Script RunTime'] = date('D M j G:i T Y', time());
@@ -180,18 +113,34 @@
     //Cycle through all the sites and add a few more fields to the site objects (swe data etc)
 	foreach($stnMetaResp->return as $station){
 	
-		$station->swe = $sweValues[$station->stationTriplet]['swe'];
+		//Add swe data 
+		$station->swe = round($sweValues[$station->stationTriplet]['swe'],2);
 		$station->obsDate = $sweValues[$station->stationTriplet]['date'];
 		
+        //Add the nws shef id from the listing file
 		$station->nwsShefId = $stationList[$station->name];
+		
+		if($station->nwsShefId){
+			$station->id = $station->nwsShefId;
+		}else{
+			$station->id = $station->shefId;
+		}
+		
+		
+		//add the normal values either median or average to the object
 		$type = $normalValues[$station->stationTriplet]['type'];
 		if($type) $station->$type = $normalValues[$station->stationTriplet]['val'];
 		$stationData[$station->stationTriplet] = $station;
+
+		//Calculate % of normal if there is and average and current data
 		if($station->swe > -9.99 && $normalValues[$station->stationTriplet]['val'] ){
                     $station->percentNormal = round(($station->swe/$normalValues[$station->stationTriplet]['val'])*100);
 		}    
+
 		$trip = explode(":",$station->stationTriplet);
 		$station->network = $trip[2];
+		$station->state = $trip[1];
+
 		if(strtotime($station->endDate) > time()) {
 			$station->active = 'true';
 			$summaryStats['NRCS Status']['Active sites']++;
@@ -200,20 +149,19 @@
 			$summaryStats['NRCS Status']['Sites not active']++;
 			}		
 		
-		$summaryStats['sitesEncoded'] = "";
 		
-		if($trip[1] == "AK" & $station->active == 'true') $summaryStats['Number of Sites']['region']['AK']['Active']++;
-		if($trip[1] == "BC" & $station->active == 'true') $summaryStats['Number of Sites']['region']['BC']['Active']++;
-		if($trip[1] == "YK" & $station->active == 'true') $summaryStats['Number of Sites']['region']['YK']['Active']++;
+		if($trip[1] == "AK" & $station->active == 'true') $summaryStats['NRCS']['region']['AK']['Active']++;
+		if($trip[1] == "BC" & $station->active == 'true') $summaryStats['NRCS']['region']['BC']['Active']++;
+		if($trip[1] == "YK" & $station->active == 'true') $summaryStats['NRCS']['region']['YK']['Active']++;
 
-		if($trip[1] == "AK" & $station->swe > -9.99) $summaryStats['Number of Sites']['region']['AK']['With Data']++;
-		if($trip[1] == "BC" & $station->swe > -9.99) $summaryStats['Number of Sites']['region']['BC']['With Data']++;
-		if($trip[1] == "YK" & $station->swe > -9.99) $summaryStats['Number of Sites']['region']['YK']['With Data']++;
+		if($trip[1] == "AK" & $station->swe > -9.99) $summaryStats['NRCS']['region']['AK']['With Data']++;
+		if($trip[1] == "BC" & $station->swe > -9.99) $summaryStats['NRCS']['region']['BC']['With Data']++;
+		if($trip[1] == "YK" & $station->swe > -9.99) $summaryStats['NRCS']['region']['YK']['With Data']++;
 
-		if($trip[2] == "SNTL" & $station->swe > -9.99) $summaryStats['Number of Sites']['network']['Snotel']['With Data']++;
-		if($trip[2] == "SNOW" & $station->swe > -9.99) $summaryStats['Number of Sites']['network']['Snow Course']['With Data']++;
-		if($trip[2] == "COOP" & $station->swe > -9.99) $summaryStats['Number of Sites']['network']['COOP']['With Data']++;
-		if($trip[2] == "MSNT" & $station->swe > -9.99) $summaryStats['Number of Sites']['network']['Manual Snotel']['With Data']++;
+		if($trip[2] == "SNTL" & $station->swe > -9.99) $summaryStats['NRCS']['network']['Snotel']['With Data']++;
+		if($trip[2] == "SNOW" & $station->swe > -9.99) $summaryStats['NRCS']['network']['Snow Course']['With Data']++;
+		if($trip[2] == "COOP" & $station->swe > -9.99) $summaryStats['NRCS']['network']['COOP']['With Data']++;
+		if($trip[2] == "MSNT" & $station->swe > -9.99) $summaryStats['NRCS']['network']['Manual Snotel']['With Data']++;
 
 
 
@@ -227,7 +175,9 @@
 				$shefStations[$station->shefId]['idFrom'] = 'NRCS';
 			}	
 		}
-		$summaryStats['sitesNotEncoded'] = array();
+		
+	
+		$summaryStats['NRCS_sitesNotEncoded'] = array();
 		if(strlen($station->nwsShefId)>0 ){
 			if($station->nwsShefId <> $station->shefId){
 				if($station->active == 'true'){
@@ -244,43 +194,45 @@
 	ksort($shefStations);
 	foreach($shefStations as $nwsid => $station){
 		$sweData = -9999;
+		$typeUsed = "";
 		foreach($pickFirst as $type){
 			if($station[$type] > -9){
 				$sweData = $station[$type];
-				continue;
+				$typeUsed = $type;
+				break;
 			}
 		}
 	
-		if($sweData > -9.99 && $station['idFrom'] == 'NWS'){	
-			$chpsShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV ".$sweData."\n";
-			$summaryStats['sitesEncoded'] .= $nwsid.",";
+		if($sweData > -9.99 && $station['idFrom'] == 'NWS'){
+			foreach($stnMetaResp->return as $station){
+				if(($station->id == $nwsid) && ($station->network == $typeUsed)){
+					$station->shefEncoding = 'data';
+				} 
+			}		                     
+			$chpsShef[] = ".A ".$nwsid." ".$qYear.$qMonth."01 Z DH00/DC".date('Ymd')."0000/SWIRV ".sprintf("%-8s",$sweData)." : ".$typeUsed."\n";
 			if (($key = array_search($nwsid, $stationList)) !== false) {
     			unset($stationList[$key]);
 			}
 			
 		}elseif($sweData > -9.99){
-			$chpsMaybeShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV ".$sweData."\n";	
+			$chpsMaybeShef[] = ".A ".$nwsid." ".$qYear.$qMonth."01 Z DH00/DC".date('Ymd')."0000/SWIRV ".sprintf("%-8s",$sweData)." : ".$typeUsed."\n";	
 		}
 	}	
 		
-	$summaryStats['sitesNotEncoded'] = $stationList;	
+	$summaryStats['NRCS_sitesNotEncoded'] = $stationList;	
 	foreach($stationList as $name => $lid){
-		$chpsSWEShefMissing[] = ".A ".$lid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV -9.99\n";
+		$chpsSWEShefMissing[] = ".A ".$lid." ".$qYear.$qMonth."01 Z DH00/DC".date('Ymd')."0000/SWIRV -9.99\n";
+		foreach($stnMetaResp->return as $station){
+			if($station->id == $lid){
+				$station->shefEncoding = 'missing';
+			} 
+		}		                     
+
 	}
 	
 	
 	$summaryStats['numShefEncoded'] = count($chpsShef);
 	$summaryStats['numShefMissing'] = count($chpsSWEShefMissing);
-	
-	
-
-	
-	
-	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", $chpsShef);
-	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", ":StnList sites below were missing \n",FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", $chpsSWEShefMissing,FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", ":Sites below were not in stnList\n",FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", $chpsMaybeShef,FILE_APPEND);
 	
 	
 	
@@ -290,82 +242,16 @@
 	fclose($fp);
 	$files[] = "nrcs2shef_chps_".$mon.$yr.".txt";
 
-	if (file_exists($mailer)) {
-		sendEmail($summaryStats,$files);
-	}else{
-		print_r($summaryStats);
-	}	
-
-	
-	
-	exit();
-
- 	// Create a GeoJSON Object to store data.  This is not required for the SHEF but for potential
-	// use in GIS / web mapping applications
-	$geoData = new stdClass();
-	$geoData->type = "FeatureCollection";
-	$geoData->features = array();
-	
-	
-	
-	
 
 
-	
-
-
-		
-		//build a point object for geoJSON file
-		$pnt = new stdClass();
-		$pnt->type = "Feature";
-		$pnt->geometry = new stdClass();
-		$pnt->geometry->type = "Point";
-		$pnt->geometry->coordinates = array($lon,$lat);
-		$pnt->metadata = new stdClass();
-		$pnt->metadata->agency = "NRCS";
-		$pnt->metadata->created = $unixDateNow;
-		$pnt->properties = new stdClass();
-		$pnt->properties->name = $name;
-		$pnt->properties->lid = $nwsid;
-		$pnt->properties->elev = $elev;
-		$pnt->properties->dataname = "Snow Water Equivalent";
-		$pnt->properties->datatype = "sw";
-		$pnt->properties->data = array( date_format(new DateTime($sweDate),'U') * 1000, floatval($sweData));
-		$pnt->properties->normdata = array( date_format(new DateTime($sweDate),'U') * 1000, floatval($sweNormData));
-		
-		//print "for ".$station ." ".$nwsid." data is: ".$sweData." Norm is: ".$sweNormData."\n";
-		
-		//if we have norm data compute percentage and store
-		if ($sweNormData >0 ){
-			$pctNorm = round(($sweData / $sweNormData)*100);
-			$pnt->properties->pctnorm = array( date_format(new DateTime($sweDate),'U') * 1000, $pctNorm);
-			$chpsShef[] = ".A ".$nwsid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIPV ".$pctNorm."\n";
-		}else{
-			$pnt->properties->pctnorm = array( date_format(new DateTime($sweDate),'U') * 1000, "NA");
-		}
-		//add feature to geoJSON
-		$geoData->features[] = $pnt;
-		
-		//store list of lids with data
-		if (!isset($lidList[$nwsid])){
-			$lidList[] = $nwsid;
-		}
-	
-	
-	//SD code for shef is SDIRM
-	$missingLids = array_diff($stationList,$lidList);
-	//print_r($missingLids);
-	$chpsSWEShefMissing = array();
-	foreach($missingLids as $lid){
-		$chpsSWEShefMissing[] = ".A ".$lid." ".$year.$mon."01 Z DH00/DC".$year.$monthDay."0000/SWIRV -9.99\n";
-	}
-	
-	
 	
 	//Get additional obs from env.gov.bc.ca
 	//mss_report.csv is ALL CAPS so need to create an uppercase to title case map
 	$keys=array_keys($stationList);
 	$map=array();
+	$bcShef = array();
+	$summaryStats['BC']['numsites'] = -1;
+	$summaryStats['BC']['numsitesIncluded'] = 0;
 	foreach($keys as $key)
 	{
 		 $map[strtoupper($key)]=$key;
@@ -376,8 +262,11 @@
 	$shefData = array();
 	//find lines that have latest obs for stations found in $stationList array
 	foreach($datafile as $index => $line){
+	    $summaryStats['BC']['numsites']++;
 		$parts = explode(",",$line);
 		if (array_key_exists($parts[0],$map)){
+		    $summaryStats['BC']['numsitesIncluded']++;
+
 			$lid = $stationList[$map[$parts[0]]];
 			$obDate = $parts[3];
 			if (!isset($obs[$lid])){
@@ -403,17 +292,94 @@
 		$precentNorm = $parts[9];
 		$survPeriod = $parts[11];
 		$norm_mm = $parts[12];
-		$chpsShef[] = ".A ".$nwsid." ".$cayear.$camon.$caday." Z DH00/DC".$cayear.$camon.$caday."0000/SDIRV ".$swe."\n";
+		$bcShef[] = ".A ".$nwsid." ".$cayear.$camon.$caday." Z DH00/DC".$cayear.$camon.$caday."0000/SDIRV ".$swe."\n";
+		
 		if ($norm_mm != ''){
 			$norm = round($norm_mm * 0.0393701,1);
 			$chpsShef[] = ".A ".$lid." ".$cayear.$camon.$caday." Z DH00/DC".$cayear.$camon.$caday."0000/SWIPV ".$precentNorm."\n";
 		}
 	}
 	
+	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsShef,FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":Stations below are from BC \n",FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $bcShef,FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":StnList NRCS sites below were missing \n",FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsSWEShefMissing,FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":NRCS sites below were not in stnList\n",FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsMaybeShef,FILE_APPEND);
+
+	if (file_exists($mailer)) {
+		sendEmail($summaryStats,$files,$emailList);
+		echo "Email with results sent to:\n";
+		foreach($emailList as $email){
+			echo "   $email\n";
+		}
+	}else{
+		print_r($summaryStats);
+	}	
+
+	//exec('/usr/bin/scp /usr/local/apps/scripts/nrcs2shef/nrcs2shef_chps_*.txt ldad@ls1-acr:/data/Incoming');
+
+    #######
+    #
+    # Functions
+    #
+    #######
+	function sendEmail($summary,$files,$recipients = array()){
+		global $startTime;
+		
+ 
+		$recipients[] = 'benjamin.johnson@noaa.gov';
+
+		$message = json_encode($summary, JSON_PRETTY_PRINT);
+
+
+		$mail = new PHPMailer;
 	
-	file_put_contents("NRCS2shef_chps_missing_".$mon.$yr.".txt",$chpsSWEShefMissing);
+		$mail->FromName = 'nws.ar.aprfc';
 
-	file_put_contents("nrcs2shef_chps_".$mon.$yr.".txt", $chpsShef);
+		foreach($recipients as $email => $name)
+		{
+			$mail->AddAddress($email, $name);
+		}
+		$mail->Subject = "nrcs2shef";
+		$mail->Body = $message;
+		foreach($files as $file){
+			$mail->addAttachment($file);
+		}
+		if(!$mail->send()) {
+			echo 'Message could not be sent.';
+			echo 'Mailer Error: ' . $mail->ErrorInfo;
+		} else {
+			echo "Results sent by email\n";
 
-	exec('/usr/bin/scp /usr/local/apps/scripts/nrcs2shef/nrcs2shef_chps_*.txt ldad@ls1-acr:/data/Incoming');
+
+		}
+		return $recipients;
+
+	}
+
+
+
+
+	function cmp($a, $b) {
+		return strcmp($a->name, $b->name);
+	}
+	
+	function createCSV($fp,$data){
+		$csv = "";
+		$headers = ['name','active','state','latitude','longitude','shefId','nwsShefId','shefEncoding','network','stationTriplet','beginDate','endDate','obsDate','swe','percentNormal','AVERAGE','MEDIAN'];
+		fputcsv($fp, $headers); 
+		foreach($data as $d){
+			foreach($headers as $h){
+				if(property_exists($d,$h)) {
+				   fwrite($fp, '"'.$d->$h.'",');			
+				}else{
+				   fwrite($fp,",");
+				}   
+			}
+			fwrite($fp,"\n");
+		}				
+	}
+	
 ?>
