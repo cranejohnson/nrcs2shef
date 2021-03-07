@@ -61,7 +61,7 @@
 	//Create the client object
 	$soapclient = new SoapClient('http://www.wcc.nrcs.usda.gov/awdbWebService/services?WSDL', array('connection_timeout'=> 120, 'exceptions' => 0));
 	
-    //Get a list of stations with SWE Data
+    	//Get a list of stations with SWE Data
 	$getStnsParams = array('stateCds' => array('AK','YK','BC'), 'networkCds' => array('SNOW','SNTL','MSNT','COOP'),'logicalAnd' => '1', 'elementCd' => 'WTEQ' );
 	$stnResp = $soapclient->getStations($getStnsParams);
 	
@@ -69,7 +69,7 @@
 	$stnMetaParams = array('stationTriplets' => $stnResp->return);
 	$stnMetaResp = $soapclient->getStationMetadataMultiple($stnMetaParams);
 
-    //Sort MetaData Array in Alphabetical Order by Name
+    	//Sort MetaData Array in Alphabetical Order by Name
 	usort($stnMetaResp->return, "cmp");
 	
 	
@@ -78,7 +78,7 @@
 	$sweParams = array('stationTriplets' => $stnResp->return, 'elementCd' => 'WTEQ', 'ordinal' => '1',
 	'duration' => 'SEMIMONTHLY', 'beginDate' => $qYear.'-'.$qMonth.'-01', 'endDate' => $qYear.'-'.$qMonth.'-'.$lastDayOfMonth, 'getFlags' => '0');
 
-    // Get SWE data for all of the stations and put the data into a array with key value staionTriplet
+    	// Get SWE data for all of the stations and put the data into a array with key value staionTriplet
 	$sweResp = $soapclient->getData($sweParams);
 	$sweValues = array();
 		
@@ -96,7 +96,7 @@
 
 
 	
-    // Build Normal queries
+    	// Build Normal queries
 	$sweNormParams = array('stationTriplets' => $stnResp->return, 'elementCd' => 'WTEQ', 'duration' => 'SEMIMONTHLY',
 	'beginMonth' => $qMonth, 'beginDay' => '01', 'endMonth' => $qMonth, 'endDay' => $lastDayOfMonth, 'getFlags' => '0',
 	"centralTendencyType" => "NORMAL");
@@ -114,14 +114,14 @@
 	$stationData = array();
 	$shefStations = array();	
 
-    //Cycle through all the sites and add a few more fields to the site objects (swe data etc)
+    	//Cycle through all the sites and add a few more fields to the site objects (swe data etc)
 	foreach($stnMetaResp->return as $station){
 	
 		//Add swe data 
 		$station->swe = round($sweValues[$station->stationTriplet]['swe'],2);
 		$station->obsDate = $sweValues[$station->stationTriplet]['date'];
 		
-        //Add the nws shef id from the listing file
+        	//Add the nws shef id from the listing file
 		$station->nwsShefId = $stationList[$station->name];
 		
 		if($station->nwsShefId){
@@ -307,7 +307,7 @@
 		}
 	}
 	
-	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsShef,FILE_APPEND);
+	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsShef);
 	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":Stations below are from BC \n",FILE_APPEND);
 	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $bcShef,FILE_APPEND);
 	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":StnList NRCS sites below were missing \n",FILE_APPEND);
