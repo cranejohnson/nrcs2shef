@@ -8,9 +8,13 @@
 	
 	// The second part of the script pull data from a Canadian BC ftp site and finds all stations that have a NWSID match
 	// and creates SHEF for CHPS
+        //
+        //  usage:  'php nrcs2shef.php 202102 benjamin.johnson@noaa.gov'  runs the script for Feb 2021 and emails results to Crane
+
 
 	include 'stnListSnowCrs.php';  //contains $stationList array with names as keys and NWSID as value
-	$mailer = "/var/www/html/tools/PHPMailer/PHPMailerAutoload.php";
+        error_reporting(0);
+        $mailer = "/var/www/html/tools/PHPMailer/PHPMailerAutoload.php";
 	if (file_exists($mailer)) {
 		require $mailer;
 	}	
@@ -196,9 +200,12 @@
 		$sweData = -9999;
 		$typeUsed = "";
 		foreach($pickFirst as $type){
+                        if(!isset($station[$type])) continue;
 			if($station[$type] > -9){
 				$sweData = $station[$type];
 				$typeUsed = $type;
+				if($type == 'SNOW') $typeUsed = "Snow Course";
+				if($type == 'SNTL') $typeUsed = "Snotel";
 				break;
 			}
 		}
@@ -240,7 +247,7 @@
 	createCSV($fp,$stnMetaResp->return);
 	
 	fclose($fp);
-	$files[] = "nrcs2shef_chps_".$mon.$yr.".txt";
+	$files[] = "nrcs2shef_chps_".$qMonth.$qYear.".txt";
 
 
 
@@ -301,12 +308,12 @@
 	}
 	
 	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsShef,FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":Stations below are from BC \n",FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $bcShef,FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":StnList NRCS sites below were missing \n",FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsSWEShefMissing,FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":NRCS sites below were not in stnList\n",FILE_APPEND);
-	file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsMaybeShef,FILE_APPEND);
+	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":Stations below are from BC \n",FILE_APPEND);
+	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $bcShef,FILE_APPEND);
+	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":StnList NRCS sites below were missing \n",FILE_APPEND);
+	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsSWEShefMissing,FILE_APPEND);
+	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", ":NRCS sites below were not in stnList\n",FILE_APPEND);
+	#file_put_contents("nrcs2shef_chps_".$qMonth.$qYear.".txt", $chpsMaybeShef,FILE_APPEND);
 
 	if (file_exists($mailer)) {
 		sendEmail($summaryStats,$files,$emailList);
@@ -318,7 +325,11 @@
 		print_r($summaryStats);
 	}	
 
-	//exec('/usr/bin/scp /usr/local/apps/scripts/nrcs2shef/nrcs2shef_chps_*.txt ldad@ls1-acr:/data/Incoming');
+
+
+	###Uncomment the line below to push to CHPS
+	
+	#exec('/usr/bin/scp /usr/local/apps/scripts/nrcs2shef/nrcs2shef_chps_*.txt ldad@ls1-acr:/data/Incoming');
 
     #######
     #
@@ -329,7 +340,7 @@
 		global $startTime;
 		
  
-		$recipients[] = 'benjamin.johnson@noaa.gov';
+#		$recipients[] = 'benjamin.johnson@noaa.gov';
 
 		$message = json_encode($summary, JSON_PRETTY_PRINT);
 
@@ -338,9 +349,9 @@
 	
 		$mail->FromName = 'nws.ar.aprfc';
 
-		foreach($recipients as $email => $name)
+		foreach($recipients as $email)
 		{
-			$mail->AddAddress($email, $name);
+			$mail->AddAddress($email,$email);
 		}
 		$mail->Subject = "nrcs2shef";
 		$mail->Body = $message;
